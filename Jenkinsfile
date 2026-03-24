@@ -13,7 +13,7 @@ pipeline {
 
     stages {
 
-        // ── 1. CHECKOUT ───────────────────────────────────────────────────
+        // 1. CHECKOUT
         stage('Checkout') {
             steps {
                 git branch: 'main',
@@ -22,7 +22,7 @@ pipeline {
             }
         }
 
-        // ── 2. BUILD ──────────────────────────────────────────────────────
+        // 2. BUILD
         stage('Build') {
             steps {
                 sh '''
@@ -39,7 +39,7 @@ pipeline {
             }
         }
 
-        // ── 3. SONARQUBE SCAN ─────────────────────────────────────────────
+        // 3. SONARQUBE
         stage('SonarQube Scanner') {
             steps {
                 withSonarQubeEnv('SonarQube-Server') {
@@ -56,7 +56,7 @@ pipeline {
             }
         }
 
-        // ── 4. DOCKER IMAGE BUILD ─────────────────────────────────────────
+        // 4. DOCKER BUILD
         stage('Docker Image Build') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
@@ -82,7 +82,7 @@ pipeline {
             }
         }
 
-        // ── 5. TRIVY SCAN ─────────────────────────────────────────────────
+        // 5. TRIVY
         stage('Trivy Scanner') {
             steps {
                 sh """
@@ -94,7 +94,7 @@ pipeline {
             }
         }
 
-        // ── 6. PUSH TO ECR ────────────────────────────────────────────────
+        // 6. PUSH TO ECR
         stage('ECR Push') {
             steps {
                 sh """
@@ -105,7 +105,7 @@ pipeline {
             }
         }
 
-        // ── 7. TERRAFORM ──────────────────────────────────────────────────
+        // 7. TERRAFORM
         stage('Terraform') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
@@ -121,7 +121,7 @@ pipeline {
             }
         }
 
-        // ── 8. K8S DEPLOY (EKS) ───────────────────────────────────────────
+        // 8. K8S DEPLOY
         stage('K8s Deploy') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
@@ -143,7 +143,7 @@ pipeline {
             }
         }
 
-        // ── 9. OWASP ZAP ─────────────────────────────────────────────────
+        // 9. OWASP ZAP
         stage('OWASP Scanner') {
             steps {
                 sh """
@@ -155,7 +155,7 @@ pipeline {
             }
         }
 
-        // ── 10. PROWLER ───────────────────────────────────────────────────
+        // 10. PROWLER
         stage('Prowler') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
@@ -169,7 +169,7 @@ pipeline {
             }
         }
 
-        // ── 11. MONITORING (PROMETHEUS + GRAFANA) ─────────────────────────
+        // 11. MONITORING (PROMETHEUS + GRAFANA)
         stage('Monitoring - Prometheus & Grafana') {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
@@ -202,7 +202,9 @@ pipeline {
             echo "Pipeline FAILED — Build #${BUILD_NUMBER}"
         }
         always {
-            cleanWs()
+            script {
+                cleanWs()
+            }
         }
     }
 }
