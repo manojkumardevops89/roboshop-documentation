@@ -1,6 +1,5 @@
 pipeline {
     agent any
-
     environment {
         AWS_REGION   = 'us-east-1'
         ECR_REGISTRY = credentials('ecr-registry')
@@ -8,11 +7,10 @@ pipeline {
         IMAGE_TAG    = "${BUILD_NUMBER}"
         CLUSTER_NAME = 'roboshop-eks-cluster'
         NAMESPACE    = 'roboshop'
-        APP_URL      = credentials('app-url')
+        // APP_URL is fetched dynamically after K8s deploy — no credential needed
+        APP_URL      = ''
     }
-
     stages {
-
         // 1. CHECKOUT
         stage('Checkout') {
             steps {
@@ -29,9 +27,7 @@ pipeline {
                     for svc in frontend cart user payment; do
                         (cd services/$svc && npm install)
                     done
-
                     (cd services/shipping && mvn clean package -q)
-
                     for svc in catalogue dispatch; do
                         (cd services/$svc && go build ./...)
                     done
@@ -64,15 +60,12 @@ pipeline {
                     sh """
                         aws ecr get-login-password --region ${AWS_REGION} \
                           | docker login --username AWS --password-stdin ${ECR_REGISTRY}
-
                         for svc in frontend cart user payment; do
                             docker build -t ${ECR_REGISTRY}/${ECR_REPO}/\$svc:${IMAGE_TAG} \
                                 -f docker/nodejs.Dockerfile services/\$svc
                         done
-
                         docker build -t ${ECR_REGISTRY}/${ECR_REPO}/shipping:${IMAGE_TAG} \
                             -f docker/java.Dockerfile services/shipping
-
                         for svc in catalogue dispatch; do
                             docker build -t ${ECR_REGISTRY}/${ECR_REPO}/\$svc:${IMAGE_TAG} \
                                 -f docker/golang.Dockerfile services/\$svc
@@ -128,7 +121,6 @@ pipeline {
                                   credentialsId: 'aws-credentials']]) {
                     sh """
                         aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-
                         for svc in frontend cart user payment shipping catalogue dispatch; do
                             helm upgrade --install \$svc helm/\$svc \
                                 --namespace ${NAMESPACE} --create-namespace \
@@ -136,22 +128,56 @@ pipeline {
                                 --set image.tag=${IMAGE_TAG} \
                                 --atomic --timeout 5m
                         done
-
                         kubectl apply -f kubernetes/ingress.yaml -n ${NAMESPACE}
                     """
+
+                    // Dynamically fetch LoadBalancer URL after deployment
+                    script {
+                        echo "Waiting for Ingress LoadBalancer URL to be assigned..."
+                        def appUrl = ''
+                        for (int i = 1; i <= 20; i++) {
+                            appUrl = sh(
+                                script: """
+                                    kubectl get ingress -n ${NAMESPACE} \
+                                        -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true
+                                """,
+                                returnStdout: true
+                            ).trim()
+
+                            if (appUrl) {
+                                echo "LoadBalancer URL found: http://${appUrl}"
+                                env.APP_URL = "http://${appUrl}"
+                                break
+                            }
+
+                            if (i == 20) {
+                                echo "WARNING: LoadBalancer URL not assigned after 5 minutes. Skipping OWASP scan."
+                            } else {
+                                echo "Attempt ${i}/20 — URL not ready yet. Retrying in 15 seconds..."
+                                sleep(15)
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // 9. OWASP ZAP
+        // 9. OWASP ZAP — skipped automatically if APP_URL not available
         stage('OWASP Scanner') {
             steps {
-                sh """
-                    docker run --rm \
-                        -v \$(pwd)/zap-reports:/zap/wrk/:rw \
-                        ghcr.io/zaproxy/zaproxy:stable \
-                        zap-baseline.py -t ${APP_URL} -r zap-report.html -I
-                """
+                script {
+                    if (!env.APP_URL || env.APP_URL.trim() == '') {
+                        echo "APP_URL is not set. Skipping OWASP ZAP scan."
+                    } else {
+                        echo "Running OWASP ZAP scan against: ${env.APP_URL}"
+                        sh """
+                            docker run --rm \
+                                -v \$(pwd)/zap-reports:/zap/wrk/:rw \
+                                ghcr.io/zaproxy/zaproxy:stable \
+                                zap-baseline.py -t ${env.APP_URL} -r zap-report.html -I
+                        """
+                    }
+                }
             }
         }
 
@@ -176,15 +202,12 @@ pipeline {
                                   credentialsId: 'aws-credentials']]) {
                     sh """
                         aws eks update-kubeconfig --region ${AWS_REGION} --name ${CLUSTER_NAME}
-
                         helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
                         helm repo update
-
                         helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
                             --namespace monitoring \
                             --create-namespace \
                             --wait --timeout 10m
-
                         kubectl patch svc monitoring-grafana \
                             -n monitoring \
                             -p '{"spec": {"type": "LoadBalancer"}}'
