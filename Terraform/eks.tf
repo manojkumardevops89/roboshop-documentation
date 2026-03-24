@@ -1,5 +1,5 @@
 resource "aws_iam_role" "eks_cluster" {
-  name = "${var.cluster_name}-cluster-role"
+  name = "roboshop-cluster-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -16,46 +16,24 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-resource "aws_security_group" "eks_cluster" {
-  name        = "${var.cluster_name}-cluster-sg"
-  description = "EKS cluster control plane security group"
-  vpc_id      = aws_vpc.main.id
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "${var.cluster_name}-cluster-sg"
-  }
-}
-
 resource "aws_eks_cluster" "main" {
-  name     = var.cluster_name
-  version  = var.cluster_version
+  name     = "roboshop-eks"
+  version  = "1.29"
   role_arn = aws_iam_role.eks_cluster.arn
 
   vpc_config {
-    subnet_ids              = aws_subnet.private[*].id
-    security_group_ids      = [aws_security_group.eks_cluster.id]
-    endpoint_private_access = true
-    endpoint_public_access  = true
+    subnet_ids = [
+      aws_subnet.private_1a.id,
+      aws_subnet.private_1b.id
+    ]
+    endpoint_public_access = true
   }
 
-  depends_on = [
-    aws_iam_role_policy_attachment.eks_cluster_policy,
-  ]
-
-  tags = {
-    Name = var.cluster_name
-  }
+  depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
 }
 
 resource "aws_iam_role" "eks_nodes" {
-  name = "${var.cluster_name}-node-role"
+  name = "roboshop-node-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -67,45 +45,63 @@ resource "aws_iam_role" "eks_nodes" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
+resource "aws_iam_role_policy_attachment" "node_policy" {
   role       = aws_iam_role.eks_nodes.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
 }
 
-resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
+resource "aws_iam_role_policy_attachment" "cni_policy" {
   role       = aws_iam_role.eks_nodes.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 }
 
-resource "aws_iam_role_policy_attachment" "eks_ecr_readonly" {
+resource "aws_iam_role_policy_attachment" "ecr_policy" {
   role       = aws_iam_role.eks_nodes.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-resource "aws_eks_node_group" "main" {
+# ---- Node Group in AZ-1a ----
+resource "aws_eks_node_group" "az1a" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "${var.cluster_name}-node-group"
+  node_group_name = "roboshop-nodes-1a"
   node_role_arn   = aws_iam_role.eks_nodes.arn
-  subnet_ids      = aws_subnet.private[*].id
-  instance_types  = [var.node_instance_type]
+  instance_types  = ["t3.medium"]
+  subnet_ids      = [aws_subnet.private_1a.id]
 
   scaling_config {
-    desired_size = var.desired_capacity
-    min_size     = var.min_size
-    max_size     = var.max_size
-  }
-
-  update_config {
-    max_unavailable = 1
+    desired_size = 1
+    min_size     = 1
+    max_size     = 2
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.eks_worker_node_policy,
-    aws_iam_role_policy_attachment.eks_cni_policy,
-    aws_iam_role_policy_attachment.eks_ecr_readonly,
+    aws_iam_role_policy_attachment.node_policy,
+    aws_iam_role_policy_attachment.cni_policy,
+    aws_iam_role_policy_attachment.ecr_policy,
   ]
 
-  tags = {
-    Name = "${var.cluster_name}-node-group"
+  tags = { Name = "roboshop-nodes-1a" }
+}
+
+# ---- Node Group in AZ-1b ----
+resource "aws_eks_node_group" "az1b" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "roboshop-nodes-1b"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  instance_types  = ["t3.medium"]
+  subnet_ids      = [aws_subnet.private_1b.id]
+
+  scaling_config {
+    desired_size = 1
+    min_size     = 1
+    max_size     = 2
   }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.node_policy,
+    aws_iam_role_policy_attachment.cni_policy,
+    aws_iam_role_policy_attachment.ecr_policy,
+  ]
+
+  tags = { Name = "roboshop-nodes-1b" }
 }
